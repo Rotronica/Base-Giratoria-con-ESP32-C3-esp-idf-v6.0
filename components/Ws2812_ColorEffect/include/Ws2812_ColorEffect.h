@@ -27,7 +27,7 @@ typedef enum
     MODO_SOLIDO,      /**< Color fijo en todos los LEDs. */
     MODO_RESPIRACION, /**< Efecto de respiración (fade in/out suave). */
     MODO_ARCOIRIS,    /**< Ciclo de arcoíris a lo largo de la tira. */
-    MODO_GRADIENTE,   /**< Transición suave entre dos colores. */
+    MODO_CALIDO,
 } modo_luz_t;
 
 /**

@@ -90,8 +90,8 @@ class Ws2812Callbacks : public NimBLECharacteristicCallbacks
                 ESP_LOGI(TAG, "Modo Arcoiris");
                 break;
             case 0x04:
-                mi_ws2812_set_modo(dev, MODO_GRADIENTE); // El monitoreo se volverá a encender automáticamente en la tarea de FreeRTOS
-                ESP_LOGI(TAG, "Modo Gradiente");
+                mi_ws2812_set_modo(dev, MODO_CALIDO); // El monitoreo se volverá a encender automáticamente en la tarea de FreeRTOS
+                ESP_LOGI(TAG, "Modo Calido");
                 break;
             default:
                 ESP_LOGW(TAG, "Comando desconocido recibido: 0x%02X", comando);
@@ -131,8 +131,8 @@ extern "C" void app_main(void)
 
     // 2. Crear el dispositivo WS2812
     dev = mi_ws2812_create(SALIDA_WS2812, 3);
+    mi_ws2812_apagar(dev); // Apaga explícitamente todos los LEDs al arrancar
     Motor_init();
-    Motor_velocidad(70);
 
     // 3. BLE
     NimBLEDevice::init("BaseGiratoria");

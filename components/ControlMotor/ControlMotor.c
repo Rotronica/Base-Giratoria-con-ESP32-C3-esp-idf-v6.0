@@ -3,6 +3,7 @@
 #include "driver/ledc.h"
 #include "esp_err.h"
 
+#define MOTOR_VELOCIDAD_DEFECTO 50 // 50% por defecto
 typedef enum
 {
     HORARIO,
@@ -16,7 +17,19 @@ static uint8_t velocidad_actual = 0;
 
 void Motor_init(void)
 {
-    // 1. Configuración del Temporizador Único a 25kHz
+    // 1. PRIMERO: configurar GPIOs en LOW con pull-down interno
+    //    (esto ocurre antes de que el LEDC tome el control)
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << GIRO_HORARIO) | (1ULL << GIRO_ANTIHORARIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(GIRO_HORARIO, 0);
+    gpio_set_level(GIRO_ANTIHORARIO, 0);
+    // 2. Configuración del Temporizador Único a 25kHz
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_SPEED_MODE,
         .duty_resolution = LEDC_DUTY_RES,
@@ -25,7 +38,7 @@ void Motor_init(void)
         .clk_cfg = LEDC_AUTO_CLK};
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    // 2. Configurar Canal A (Giro horario)
+    // 3. Configurar Canal A (Giro horario)
     ledc_channel_config_t channel_a = {
         .speed_mode = LEDC_SPEED_MODE,
         .channel = MOTOR_CHANNEL_A,
@@ -37,7 +50,7 @@ void Motor_init(void)
     };
     ESP_ERROR_CHECK(ledc_channel_config(&channel_a));
 
-    // 3. Configurar Canal B (Giro antihorario)
+    // 4. Configurar Canal B (Giro antihorario)
     ledc_channel_config_t channel_b = {
         .speed_mode = LEDC_SPEED_MODE,
         .channel = MOTOR_CHANNEL_B,
@@ -48,7 +61,10 @@ void Motor_init(void)
         .hpoint = 0,
     };
     ESP_ERROR_CHECK(ledc_channel_config(&channel_b));
+    // 5. Asegurar que ambos canales arrancan en 0
     Motor_stop();
+    // 6. Velocidad por defecto (sin activar el motor)
+    velocidad_actual = MOTOR_VELOCIDAD_DEFECTO;
 }
 
 // Al presionar los botones, cambiamos el sentido y refrescamos el hardware inmediatamente

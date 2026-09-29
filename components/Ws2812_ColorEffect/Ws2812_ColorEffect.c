@@ -1,14 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <math.h>
 #include "Ws2812_ColorEffect.h"
 #include "esp_log.h"
-#include "esp_timer.h"
-#include <math.h>
 #include "led_strip.h"
 
+#define BACKEND_SPI_PARA_ESP32_C3
 static const char *TAG = "MI_WS2812";
 
-// Helper: aplica brillo a un color RGB de 24 bits
+/* ============================================================
+ *  Helpers (idénticos a tu versión original)
+ * ============================================================ */
+
 static uint32_t aplicar_brillo(uint32_t color, uint8_t brillo)
 {
     uint8_t r = (color >> 16) & 0xFF;
@@ -20,7 +24,6 @@ static uint32_t aplicar_brillo(uint32_t color, uint8_t brillo)
     return (r << 16) | (g << 8) | b;
 }
 
-// Helper: pinta todos los LEDs con un mismo color
 static void pintar_todos(mi_ws2812_t *dev, uint8_t r, uint8_t g, uint8_t b)
 {
     for (uint32_t i = 0; i < dev->num_leds; i++)
@@ -30,7 +33,6 @@ static void pintar_todos(mi_ws2812_t *dev, uint8_t r, uint8_t g, uint8_t b)
     led_strip_refresh(dev->strip);
 }
 
-// Helper: convierte HSV (h: 0-255, s: 0-255, v: 0-255) a RGB
 static void hsv_a_rgb(uint8_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, uint8_t *b)
 {
     if (s == 0)
@@ -38,8 +40,8 @@ static void hsv_a_rgb(uint8_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, u
         *r = *g = *b = v;
         return;
     }
-    uint8_t region = h / 43;               // 0..5
-    uint8_t resto = (h - region * 43) * 6; // 0..255
+    uint8_t region = h / 43;
+    uint8_t resto = (h - region * 43) * 6;
     uint8_t p = (v * (255 - s)) / 255;
     uint8_t q = (v * (255 - ((s * resto) / 255))) / 255;
     uint8_t t = (v * (255 - ((s * (255 - resto)) / 255))) / 255;
@@ -79,24 +81,16 @@ static void hsv_a_rgb(uint8_t h, uint8_t s, uint8_t v, uint8_t *r, uint8_t *g, u
     }
 }
 
-// Helper: interpola linealmente entre dos colores RGB24
-// t va de 0 a 255
-static uint32_t interpolar_color(uint32_t c1, uint32_t c2, uint8_t t)
-{
-    uint8_t r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
-    uint8_t r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
-    uint8_t r = r1 + ((int)(r2 - r1) * t) / 255;
-    uint8_t g = g1 + ((int)(g2 - g1) * t) / 255;
-    uint8_t b = b1 + ((int)(b2 - b1) * t) / 255;
-    return (r << 16) | (g << 8) | b;
-}
+/* ============================================================
+ *  API pública
+ * ============================================================ */
 
 mi_ws2812_t *mi_ws2812_create(uint8_t gpio, uint8_t num_leds)
 {
     mi_ws2812_t *dev = calloc(1, sizeof(mi_ws2812_t));
     if (dev == NULL)
     {
-        ESP_LOGE(TAG, "No se pudo reservar memoria para el dispositivo");
+        ESP_LOGE(TAG, "No se pudo reservar memoria");
         return NULL;
     }
 
@@ -104,17 +98,27 @@ mi_ws2812_t *mi_ws2812_create(uint8_t gpio, uint8_t num_leds)
         .strip_gpio_num = gpio,
         .max_leds = num_leds,
         .led_model = LED_MODEL_WS2812,
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB, // WS2812 usa GRB
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
         .flags.invert_out = false,
     };
+#ifdef BACKEND_SPI_PARA_ESP32_C3 // NUEVA configuración para el backend SPI
+    led_strip_spi_config_t spi_config = {
+        .clk_src = SPI_CLK_SRC_DEFAULT,
+        .spi_bus = SPI2_HOST,   // El bus SPI que usarás
+        .flags.with_dma = true, // ¡La clave! Habilita DMA para no depender de interrupciones
+    };
 
+    // Cambias la función de creación
+    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &dev->strip));
+#else
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10 * 1000 * 1000,
-        .flags.with_dma = false, // ESP32-C3 no tiene DMA para RMT
+        .flags.with_dma = false,
     };
 
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &dev->strip));
+#endif
     led_strip_clear(dev->strip);
     led_strip_refresh(dev->strip);
 
@@ -165,25 +169,37 @@ void mi_ws2812_apagar(mi_ws2812_t *dev)
     led_strip_refresh(dev->strip);
 }
 
+/* ============================================================
+ *  Update
+ * ============================================================ */
+
 void mi_ws2812_update(mi_ws2812_t *dev)
 {
     if (dev == NULL)
         return;
 
     static uint32_t contador = 0;
+    static bool ya_apagado = false; // evita refrescos repetidos en MODO_APAGADO
+
     contador++;
 
     switch (dev->modo_actual)
     {
     case MODO_APAGADO:
     {
-        led_strip_clear(dev->strip);
-        led_strip_refresh(dev->strip);
+        // Solo refrescar la primera vez tras entrar en este modo
+        if (!ya_apagado)
+        {
+            led_strip_clear(dev->strip);
+            led_strip_refresh(dev->strip);
+            ya_apagado = true;
+        }
         break;
     }
 
     case MODO_SOLIDO:
     {
+        ya_apagado = false;
         uint32_t c = aplicar_brillo(dev->color_primario, dev->brillo);
         pintar_todos(dev, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
         break;
@@ -191,7 +207,7 @@ void mi_ws2812_update(mi_ws2812_t *dev)
 
     case MODO_RESPIRACION:
     {
-        // Seno para fade suave: factor va de 0 a 255
+        ya_apagado = false;
         float fase = (contador % 100) / 100.0f;
         uint8_t factor = (uint8_t)(127.5f * (1.0f + sinf(fase * 2.0f * M_PI)));
         uint8_t brillo_efectivo = (uint8_t)((factor * dev->brillo) / 255);
@@ -202,6 +218,7 @@ void mi_ws2812_update(mi_ws2812_t *dev)
 
     case MODO_ARCOIRIS:
     {
+        ya_apagado = false;
         for (uint32_t i = 0; i < dev->num_leds; i++)
         {
             uint8_t hue = (contador * 3 + i * 8) % 255;
@@ -213,15 +230,22 @@ void mi_ws2812_update(mi_ws2812_t *dev)
         break;
     }
 
-    case MODO_GRADIENTE:
+    case MODO_CALIDO:
     {
-        // t va de 0 a 255 en un ciclo completo
-        uint8_t t = (contador * 5) % 256;
-        // Triángulo: 0..255..0 para ida y vuelta
-        uint8_t t_tri = (t < 128) ? (t * 2) : ((255 - t) * 2);
-        uint32_t c = interpolar_color(dev->color_primario, dev->color_secundario, t_tri);
-        c = aplicar_brillo(c, dev->brillo);
-        pintar_todos(dev, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+        ya_apagado = false;
+        // Respiración entre rojo y ámbar
+        float fase = (contador % 100) / 100.0f;
+        uint8_t factor = (uint8_t)(127.5f * (1.0f + sinf(fase * 2.0f * M_PI)));
+
+        uint8_t r = 255;
+        uint8_t g = (uint8_t)((factor * 128) / 255);
+        uint8_t b = 0;
+
+        r = (r * dev->brillo) / 255;
+        g = (g * dev->brillo) / 255;
+        b = (b * dev->brillo) / 255;
+
+        pintar_todos(dev, r, g, b);
         break;
     }
 

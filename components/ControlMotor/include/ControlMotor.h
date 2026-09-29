@@ -15,7 +15,7 @@
 #define MOTOR_CHANNEL_A LEDC_CHANNEL_0
 #define MOTOR_CHANNEL_B LEDC_CHANNEL_1
 
-#define GIRO_HORARIO GPIO_NUM_2
+#define GIRO_HORARIO GPIO_NUM_4
 #define GIRO_ANTIHORARIO GPIO_NUM_3
 void Motor_init(void);
 void Motor_giro_Horario(void);
