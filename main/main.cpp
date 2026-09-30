@@ -18,6 +18,7 @@ extern "C"
 #define CHAR_MOTOR_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914c"
 #define CHAR_WS2812_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914d"
 #define VELOCIDAD_MOTOR_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914e"
+#define BRILLO_RGB_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914f"
 
 static const char *TAG = "Main";
 mi_ws2812_t *dev = NULL;
@@ -109,8 +110,38 @@ class VelocidadMotorCallbacks : public NimBLECharacteristicCallbacks
         if (!valor.empty())
         {
             uint8_t velocidad = valor[0];
-            Motor_velocidad(velocidad);
-            ESP_LOGI(TAG, "Velocidad motor: %d%%", velocidad);
+            if (velocidad <= 100)
+            {
+                Motor_velocidad(velocidad);
+                ESP_LOGI(TAG, "Velocidad motor: %d%%", velocidad);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "Comando invalido para la velocida: %d%%", velocidad);
+            }
+        }
+    }
+};
+
+class BrilloRGBCallbacks : public NimBLECharacteristicCallbacks
+{
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override
+    {
+        std::string valor = pCharacteristic->getValue();
+        if (valor.empty())
+            return;
+
+        uint8_t porcentaje = valor[0];
+        if (porcentaje > 100)
+        {
+            porcentaje = 100; // Validación semántica
+            ESP_LOGW(TAG, "El comando es mayor a 100%%");
+        }
+        else
+        {
+            uint8_t brillo = (porcentaje * 255) / 100; // Conversión
+            mi_ws2812_set_brillo(dev, brillo);
+            ESP_LOGI(TAG, "Brillo: %d%%", porcentaje);
         }
     }
 };
@@ -119,6 +150,7 @@ static MisCallbacksServidor serverCallbacks;
 static MotorCallbacks motorCallbacks;
 static Ws2812Callbacks ws2812Callbacks;
 static VelocidadMotorCallbacks velocidadMotorCallbacks;
+static BrilloRGBCallbacks brillorgbCallbacks;
 extern "C" void app_main(void)
 {
     // 1. NVS primero
@@ -144,20 +176,29 @@ extern "C" void app_main(void)
     // 5. Servicio y características
     NimBLEService *pService = pServer->createService(SERVICE_UUID);
 
+    // Caracteristica para el motor
     NimBLECharacteristic *pMotorChar = pService->createCharacteristic(
         CHAR_MOTOR_UUID,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     pMotorChar->setCallbacks(&motorCallbacks);
 
+    // Caracteristica para los modos de los RGB
     NimBLECharacteristic *pWs2812Char = pService->createCharacteristic(
         CHAR_WS2812_UUID,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     pWs2812Char->setCallbacks(&ws2812Callbacks);
 
+    // Caracteristica para controlar la velocidad del motor
     NimBLECharacteristic *pVelocidadMotor = pService->createCharacteristic(
         VELOCIDAD_MOTOR_UUID,
         NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     pVelocidadMotor->setCallbacks(&velocidadMotorCallbacks);
+
+    // Caracteristica para controlar el brillo de los leds RGB WS2812
+    NimBLECharacteristic *pBrilloRGB = pService->createCharacteristic(
+        BRILLO_RGB_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    pBrilloRGB->setCallbacks(&brillorgbCallbacks);
 
     // 6. Advertising
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
